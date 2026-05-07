@@ -9,7 +9,7 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@kafkajs/confluent-schema-registry": "^3.3.0",
+    "@kafkajs/confluent-schema-registry": "^4.0.8",
     "@nestjs/common": "^10.0.0",
     "@nestjs/config": "^3.0.0",
     "@nestjs/core": "^10.0.0",
