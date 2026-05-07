@@ -1,0 +1,72 @@
+{
+  "type": "record",
+  "name": "NBAEvent",
+  "namespace": "com.sporttracking",
+  "doc": "A single NBA game event. Wire format: [0x00][4-byte schema ID][avro binary].",
+  "fields": [
+    { "name": "id",      "type": "string" },
+    { "name": "sport",   "type": "string" },
+    { "name": "gameId",  "type": "string" },
+    { "name": "matchId", "type": "string" },
+    {
+      "name": "type",
+      "type": {
+        "type": "enum",
+        "name": "NBAEventType",
+        "doc": "Adding new symbols is a BACKWARD-incompatible change — bump the schema version.",
+        "symbols": [
+          "GAME_START", "QUARTER_START", "QUARTER_END", "GAME_END",
+          "BASKET_2PT", "BASKET_3PT", "FREE_THROW",
+          "FOUL", "SUBSTITUTION", "TIMEOUT"
+        ]
+      }
+    },
+    { "name": "timestamp", "type": "long",   "doc": "Unix epoch milliseconds" },
+    { "name": "quarter",   "type": "int"    },
+    { "name": "clock",     "type": "string", "doc": "MM:SS remaining in the quarter" },
+    {
+      "name": "homeTeam",
+      "type": {
+        "type": "record",
+        "name": "Team",
+        "fields": [
+          { "name": "id",        "type": "string" },
+          { "name": "name",      "type": "string" },
+          { "name": "shortName", "type": "string" },
+          { "name": "score",     "type": "int"    }
+        ]
+      }
+    },
+    { "name": "awayTeam", "type": "Team" },
+    {
+      "name": "player",
+      "doc": "Player involved in the event. Null for team-level events (TIMEOUT, QUARTER_*).",
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "Player",
+          "fields": [
+            { "name": "id",     "type": "string" },
+            { "name": "name",   "type": "string" },
+            { "name": "number", "type": "int"    },
+            { "name": "teamId", "type": "string" }
+          ]
+        }
+      ],
+      "default": null
+    },
+    {
+      "name": "substitute",
+      "doc": "Incoming player for SUBSTITUTION events. Null otherwise.",
+      "type": ["null", "Player"],
+      "default": null
+    },
+    {
+      "name": "points",
+      "doc": "Points scored: 1 (FREE_THROW), 2 (BASKET_2PT), 3 (BASKET_3PT). Null otherwise.",
+      "type": ["null", "int"],
+      "default": null
+    }
+  ]
+}

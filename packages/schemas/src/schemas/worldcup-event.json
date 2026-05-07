@@ -1,0 +1,66 @@
+{
+  "type": "record",
+  "name": "WorldCupEvent",
+  "namespace": "com.sporttracking",
+  "doc": "A single World Cup match event. Wire format: [0x00][4-byte schema ID][avro binary].",
+  "fields": [
+    { "name": "id",      "type": "string" },
+    { "name": "sport",   "type": "string" },
+    { "name": "matchId", "type": "string" },
+    {
+      "name": "type",
+      "type": {
+        "type": "enum",
+        "name": "WorldCupEventType",
+        "doc": "Adding new symbols is a BACKWARD-incompatible change — bump the schema version.",
+        "symbols": [
+          "MATCH_START", "HALF_TIME", "FULL_TIME",
+          "GOAL", "OWN_GOAL",
+          "YELLOW_CARD", "RED_CARD",
+          "SUBSTITUTION",
+          "PENALTY_AWARDED", "PENALTY_SCORED", "PENALTY_MISSED"
+        ]
+      }
+    },
+    { "name": "timestamp", "type": "long", "doc": "Unix epoch milliseconds" },
+    { "name": "minute",    "type": "int"  },
+    {
+      "name": "homeTeam",
+      "type": {
+        "type": "record",
+        "name": "Team",
+        "fields": [
+          { "name": "id",        "type": "string" },
+          { "name": "name",      "type": "string" },
+          { "name": "shortName", "type": "string" },
+          { "name": "score",     "type": "int"    }
+        ]
+      }
+    },
+    { "name": "awayTeam", "type": "Team" },
+    {
+      "name": "player",
+      "doc": "The player involved (scorer, carded, subbed off). Null for non-player events.",
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "Player",
+          "fields": [
+            { "name": "id",     "type": "string" },
+            { "name": "name",   "type": "string" },
+            { "name": "number", "type": "int"    },
+            { "name": "teamId", "type": "string" }
+          ]
+        }
+      ],
+      "default": null
+    },
+    {
+      "name": "substitute",
+      "doc": "The incoming player for SUBSTITUTION events. Null otherwise.",
+      "type": ["null", "Player"],
+      "default": null
+    }
+  ]
+}
