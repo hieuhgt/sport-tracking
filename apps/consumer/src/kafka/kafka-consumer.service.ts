@@ -9,6 +9,11 @@ import { SportEvent } from '@sport-tracking/schemas';
 import { StateService } from '../state/state.service';
 import { EventsGateway } from '../events/events.gateway';
 
+const TOPICS = [
+  { topic: 'worldcup.events', numPartitions: 6, replicationFactor: 3 },
+  { topic: 'nba.events',      numPartitions: 6, replicationFactor: 3 },
+];
+
 @Injectable()
 export class KafkaConsumerService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(KafkaConsumerService.name);
@@ -40,6 +45,7 @@ export class KafkaConsumerService implements OnApplicationBootstrap, OnApplicati
     await this.consumer.connect();
     this.logger.log('Connected to Kafka');
 
+    await this.ensureTopics(kafka);
     await this.consumer.subscribe({ topics: ['worldcup.events', 'nba.events'], fromBeginning: false });
 
     await this.consumer.run({
@@ -60,5 +66,20 @@ export class KafkaConsumerService implements OnApplicationBootstrap, OnApplicati
   async onApplicationShutdown(): Promise<void> {
     await this.consumer?.disconnect();
     this.logger.log('Kafka consumer disconnected');
+  }
+
+  private async ensureTopics(kafka: Kafka): Promise<void> {
+    const admin = kafka.admin();
+    await admin.connect();
+    try {
+      const existing = await admin.listTopics();
+      const toCreate = TOPICS.filter((t) => !existing.includes(t.topic));
+      if (toCreate.length > 0) {
+        await admin.createTopics({ topics: toCreate });
+        toCreate.forEach((t) => this.logger.log(`Created topic "${t.topic}"`));
+      }
+    } finally {
+      await admin.disconnect();
+    }
   }
 }

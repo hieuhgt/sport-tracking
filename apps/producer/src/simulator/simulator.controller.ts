@@ -17,6 +17,12 @@ export class SimulatorController {
     return { ok: true, message: 'Simulator stopped' };
   }
 
+  @Post('reset')
+  async reset() {
+    await this.simulatorService.reset();
+    return { ok: true, message: 'Simulator reset' };
+  }
+
   @Get('status')
   status() {
     return { running: this.simulatorService.isRunning() };

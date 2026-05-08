@@ -1,4 +1,4 @@
-import { Team } from '../types/events';
+import { Team } from "@sport-tracking/schemas";
 
 interface Props {
   homeTeam: Team;
@@ -22,9 +22,11 @@ export function MatchCard({ homeTeam, awayTeam, statusLabel, timeLabel, statusCo
         </div>
 
         <div className="scoreboard-center">
-          <span className="score">{homeTeam.score}</span>
-          <span className="score-sep">–</span>
-          <span className="score">{awayTeam.score}</span>
+          <div className="score-row">
+            <span className="score">{homeTeam.score}</span>
+            <span className="score-sep">–</span>
+            <span className="score">{awayTeam.score}</span>
+          </div>
           <div className="time-label">{timeLabel}</div>
         </div>
 

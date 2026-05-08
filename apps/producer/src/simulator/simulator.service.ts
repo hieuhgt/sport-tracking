@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { v4 as uuid } from 'uuid';
+import Redis from 'ioredis';
 import {
   WorldCupEvent, WorldCupEventType,
   NBAEvent, NBAEventType,
@@ -7,7 +8,9 @@ import {
 } from '@sport-tracking/schemas';
 import { KafkaService } from '../kafka/kafka.service';
 
+/** Fixed match ID used for the simulated World Cup match. */
 const WC_MATCH_ID = 'wc-match-1';
+/** Fixed game ID used for the simulated NBA game. */
 const NBA_GAME_ID = 'nba-game-1';
 
 const brazilPlayers: Player[] = [
@@ -43,24 +46,38 @@ const warriorsPlayers: Player[] = [
   { id: 'n8', name: 'Andrew Wiggins', number: 22, teamId: 'warriors' },
 ];
 
+/**
+ * Drives two independent game simulations — a FIFA World Cup match and an NBA game —
+ * by publishing randomised sport events to Kafka on fixed intervals.
+ *
+ * Each simulation runs as a `setInterval` loop. Every tick advances the in-memory
+ * game state (score, minute/clock, cards) and publishes the resulting event via
+ * {@link KafkaService}. Both loops stop automatically when their respective game ends.
+ */
 @Injectable()
 export class SimulatorService {
   private readonly logger = new Logger(SimulatorService.name);
 
+  /** Active interval handle for the World Cup simulation, or `null` when stopped. */
   private wcTimer: NodeJS.Timeout | null = null;
+  /** Active interval handle for the NBA simulation, or `null` when stopped. */
   private nbaTimer: NodeJS.Timeout | null = null;
 
+  /** Mutable in-memory state for the ongoing World Cup match. */
   private wcState = {
     minute: 0,
     homeTeam: { id: 'brazil',  name: 'Brazil',  shortName: 'BRA', score: 0 } as Team,
     awayTeam: { id: 'germany', name: 'Germany', shortName: 'GER', score: 0 } as Team,
     started: false,
     finished: false,
+    /** Tracks yellow-card counts per player ID to detect second-yellow red cards. */
     yellowCards: {} as Record<string, number>,
   };
 
+  /** Mutable in-memory state for the ongoing NBA game. */
   private nbaState = {
     quarter: 1,
+    /** Seconds remaining in the current quarter (starts at 720 = 12 minutes). */
     secondsLeft: 720,
     homeTeam: { id: 'lakers',   name: 'Los Angeles Lakers',    shortName: 'LAL', score: 0 } as Team,
     awayTeam: { id: 'warriors', name: 'Golden State Warriors', shortName: 'GSW', score: 0 } as Team,
@@ -70,6 +87,11 @@ export class SimulatorService {
 
   constructor(private kafkaService: KafkaService) {}
 
+  /**
+   * Starts both the World Cup and NBA simulation loops.
+   * Each loop fires on a random interval (WC: 2–4 s, NBA: 1.5–3 s).
+   * Does nothing if either loop is already running.
+   */
   start(): void {
     if (this.wcTimer || this.nbaTimer) return;
     this.logger.log('Starting simulator');
@@ -83,28 +105,86 @@ export class SimulatorService {
     );
   }
 
+  /** Stops both simulation loops and resets the timer handles to `null`. */
   stop(): void {
     if (this.wcTimer)  { clearInterval(this.wcTimer);  this.wcTimer  = null; }
     if (this.nbaTimer) { clearInterval(this.nbaTimer); this.nbaTimer = null; }
     this.logger.log('Simulator stopped');
   }
 
+  /** Returns `true` if at least one simulation loop is currently active. */
   isRunning(): boolean {
     return this.wcTimer !== null || this.nbaTimer !== null;
   }
 
+  /**
+   * Stops both loops, resets all in-memory game state to initial values,
+   * and deletes the match state keys from Redis so the frontend clears too.
+   */
+  async reset(): Promise<void> {
+    this.stop();
+
+    this.wcState = {
+      minute: 0,
+      homeTeam: { id: 'brazil',  name: 'Brazil',  shortName: 'BRA', score: 0 } as Team,
+      awayTeam: { id: 'germany', name: 'Germany', shortName: 'GER', score: 0 } as Team,
+      started: false,
+      finished: false,
+      yellowCards: {},
+    };
+
+    this.nbaState = {
+      quarter: 1,
+      secondsLeft: 720,
+      homeTeam: { id: 'lakers',   name: 'Los Angeles Lakers',    shortName: 'LAL', score: 0 } as Team,
+      awayTeam: { id: 'warriors', name: 'Golden State Warriors', shortName: 'GSW', score: 0 } as Team,
+      started: false,
+      finished: false,
+    };
+
+    const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379');
+    try {
+      await redis.del(`wc:match:${WC_MATCH_ID}`, `nba:game:${NBA_GAME_ID}`);
+      this.logger.log('Redis state cleared');
+    } finally {
+      redis.disconnect();
+    }
+  }
+
+  /**
+   * Returns a random integer in the inclusive range `[min, max]`.
+   * Used to vary event timing and game-clock advances.
+   */
   private rand(min: number, max: number): number {
     return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 
+  /** Returns a uniformly random element from `arr`. */
   private pick<T>(arr: T[]): T {
     return arr[Math.floor(Math.random() * arr.length)];
   }
 
+  /**
+   * Converts a number of seconds into a `"MM:SS"` clock string.
+   * @param s - Total seconds remaining in the quarter.
+   */
   private clockStr(s: number): string {
     return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   }
 
+  /**
+   * Advances the World Cup simulation by one tick.
+   *
+   * Lifecycle:
+   * 1. First call → publishes `MATCH_START` and sets `started = true`.
+   * 2. Minute 45–49 → publishes `HALF_TIME` and resets minute to 46.
+   * 3. Minute ≥ 90 → publishes `FULL_TIME` and sets `finished = true`.
+   * 4. Otherwise → rolls a random event:
+   *    - 25 % chance: `GOAL` or `OWN_GOAL` (home team scores with 55 % probability; 8 % own-goal chance).
+   *    - 17 % chance: `YELLOW_CARD` or `RED_CARD` (second yellow for the same player triggers a red).
+   *    - 13 % chance: `SUBSTITUTION`.
+   *    - 45 % chance: no event this tick.
+   */
   private async wcTick(): Promise<void> {
     if (this.wcState.finished) return;
 
@@ -180,6 +260,23 @@ export class SimulatorService {
     this.logger.debug(`WC ${type} min=${this.wcState.minute}`);
   }
 
+  /**
+   * Advances the NBA simulation by one tick.
+   *
+   * Lifecycle:
+   * 1. First call → publishes `GAME_START` and sets `started = true`.
+   * 2. `secondsLeft` reaches 0:
+   *    - Quarter < 4 → publishes `QUARTER_END`, increments quarter, resets clock to 720 s.
+   *    - Quarter 4 → publishes `GAME_END` and sets `finished = true`.
+   * 3. Otherwise → decrements the clock by 5–25 s, then rolls a random event:
+   *    - 40 % chance: `BASKET_2PT` (+2 pts).
+   *    - 20 % chance: `BASKET_3PT` (+3 pts).
+   *    - 10 % chance: `FREE_THROW` (+1 pt).
+   *    - 10 % chance: `FOUL` (no score change).
+   *    - 8 % chance: `SUBSTITUTION`.
+   *    - 5 % chance: `TIMEOUT`.
+   *    - 7 % chance: no event this tick.
+   */
   private async nbaTick(): Promise<void> {
     if (this.nbaState.finished) return;
 
